@@ -48,6 +48,8 @@ Once deployed, your bot will be live and can respond to messages sent to your Te
 
 - in index.js file: add TOKEN of your bot received from BotFather
 - SECRET: any random string
+- after deployment, register webhook in Telegram by hitting this URL: https://your.someworker.workers.dev/registerWebhook
+- To remove the webhook and stop bot: https://your.someworker.workers.dev/unRegisterWebhook
 
 ## License
 
