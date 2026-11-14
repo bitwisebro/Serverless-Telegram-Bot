@@ -64,6 +64,34 @@ export async function sendMessageWithMarkup(
 }
 
 /**
+ * Edits text and reply markup of an existing message.
+ * https://core.telegram.org/bots/api#editmessagetext
+ */
+export async function editMessageText(
+  token: string,
+  chatId: number,
+  messageId: number,
+  text: string,
+  replyMarkup?: TelegramInlineKeyboardMarkup
+): Promise<TelegramApiResponse> {
+  const url = `https://api.telegram.org/bot${token}/editMessageText`;
+  const body: Record<string, unknown> = {
+    chat_id: chatId,
+    message_id: messageId,
+    text,
+  };
+  if (replyMarkup) {
+    body.reply_markup = replyMarkup;
+  }
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  return (await res.json()) as TelegramApiResponse;
+}
+
+/**
  * Answers a callback query to dismiss the button loading spinner.
  * https://core.telegram.org/bots/api#answercallbackquery
  */

@@ -41,6 +41,40 @@ export function isValidChapterAndVerse(chapter: number, verse: number): boolean 
 }
 
 /**
+ * Parses chapter and verse from text formats like "2 47", "2:47", "chapter 2 verse 47", "ch 2 v 47", "2.47".
+ */
+export function parseChapterAndVerse(text: string): { chapter: number; verse: number } | null {
+  const trimmed = text.trim();
+  const regex =
+    /^(?:(?:chapter|ch)\.?\s*)?(\d+)(?:\s*,\s*)?(?:\s*(?:[:\-\/\.]|(?:verse|slok|sloka|v|s)\.?)\s*|\s+)(\d+)$/i;
+  const match = trimmed.match(regex);
+  if (match) {
+    const chapter = parseInt(match[1], 10);
+    const verse = parseInt(match[2], 10);
+    if (!isNaN(chapter) && !isNaN(verse)) {
+      return { chapter, verse };
+    }
+  }
+  return null;
+}
+
+/**
+ * Parses a single verse number from text formats like "47", "verse 47", "slok 47", "v 47", "#47".
+ */
+export function parseVerseOnly(text: string): number | null {
+  const trimmed = text.trim();
+  const regex = /^(?:(?:verse|slok|sloka|v|s|#)\.?\s*)?(\d+)$/i;
+  const match = trimmed.match(regex);
+  if (match) {
+    const verse = parseInt(match[1], 10);
+    if (!isNaN(verse)) {
+      return verse;
+    }
+  }
+  return null;
+}
+
+/**
  * Fetches slok details from the Vedic Scriptures API.
  */
 export async function fetchSlok(chapter: number | string, verse?: number | string): Promise<VedicSlokResponse> {

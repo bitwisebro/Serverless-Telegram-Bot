@@ -6,8 +6,18 @@ import {
   getRandomChapterAndVerse,
   isValidChapterAndVerse,
   CHAPTER_VERSE_COUNTS,
+  parseChapterAndVerse,
+  parseVerseOnly,
 } from '../src/slok';
-import { getChapterKeyboard } from '../src/index';
+import {
+  getChapterKeyboard,
+  getVerseKeyboard,
+  setUserChapter,
+  getUserChapter,
+  clearUserSession,
+  onCallbackQuery,
+  onMessage,
+} from '../src/index';
 import { getTelegramApiUrl, getFileDownloadUrl } from '../src/telegram';
 import { VedicSlokResponse } from '../src/types';
 
@@ -158,6 +168,68 @@ describe('Slok Utilities', () => {
     expect(keyboard[0][0]).toEqual({ text: 'Ch 1', callback_data: 'ch_1' });
     expect(keyboard[4][1]).toEqual({ text: 'Ch 18', callback_data: 'ch_18' });
   });
+
+  it('generates verse keyboard for a given chapter with a back button', () => {
+    // Chapter 1 has 47 verses
+    const kb1 = getVerseKeyboard(1);
+    const totalButtons1 = kb1.reduce((sum, row) => sum + row.length, 0);
+    expect(totalButtons1).toBe(48); // 47 verses + 1 back button
+    expect(kb1[0][0]).toEqual({ text: '1', callback_data: 'v_1_1' });
+    expect(kb1[kb1.length - 1][0]).toEqual({
+      text: '« Back to Chapters',
+      callback_data: 'back_to_chapters',
+    });
+
+    // Chapter 2 has 72 verses
+    const kb2 = getVerseKeyboard(2);
+    const totalButtons2 = kb2.reduce((sum, row) => sum + row.length, 0);
+    expect(totalButtons2).toBe(73); // 72 verses + 1 back button
+    expect(kb2[0][0]).toEqual({ text: '1', callback_data: 'v_2_1' });
+  });
+
+  it('correctly parses chapter and verse from various input formats', () => {
+    expect(parseChapterAndVerse('2 47')).toEqual({ chapter: 2, verse: 47 });
+    expect(parseChapterAndVerse('2:47')).toEqual({ chapter: 2, verse: 47 });
+    expect(parseChapterAndVerse('2, 47')).toEqual({ chapter: 2, verse: 47 });
+    expect(parseChapterAndVerse('2.47')).toEqual({ chapter: 2, verse: 47 });
+    expect(parseChapterAndVerse('2-47')).toEqual({ chapter: 2, verse: 47 });
+    expect(parseChapterAndVerse('chapter 2 verse 47')).toEqual({ chapter: 2, verse: 47 });
+    expect(parseChapterAndVerse('ch 2 v 47')).toEqual({ chapter: 2, verse: 47 });
+    expect(parseChapterAndVerse('ch. 2, slok 47')).toEqual({ chapter: 2, verse: 47 });
+
+    // Invalid formats
+    expect(parseChapterAndVerse('hello')).toBeNull();
+    expect(parseChapterAndVerse('47')).toBeNull();
+  });
+
+  it('correctly parses single verse input from various formats', () => {
+    expect(parseVerseOnly('47')).toBe(47);
+    expect(parseVerseOnly('verse 47')).toBe(47);
+    expect(parseVerseOnly('slok 47')).toBe(47);
+    expect(parseVerseOnly('sloka 47')).toBe(47);
+    expect(parseVerseOnly('v 47')).toBe(47);
+    expect(parseVerseOnly('#47')).toBe(47);
+    expect(parseVerseOnly('s 47')).toBe(47);
+
+    // Invalid single verse
+    expect(parseVerseOnly('hello')).toBeNull();
+    expect(parseVerseOnly('2 47')).toBeNull();
+  });
+
+  it('tracks user chapter sessions per chat', () => {
+    const testChatId = 98765;
+    clearUserSession(testChatId);
+    expect(getUserChapter(testChatId)).toBeUndefined();
+
+    setUserChapter(testChatId, 2);
+    expect(getUserChapter(testChatId)).toBe(2);
+
+    setUserChapter(testChatId, 18);
+    expect(getUserChapter(testChatId)).toBe(18);
+
+    clearUserSession(testChatId);
+    expect(getUserChapter(testChatId)).toBeUndefined();
+  });
 });
 
 describe('Telegram API Helpers', () => {
@@ -172,5 +244,126 @@ describe('Telegram API Helpers', () => {
   it('constructs correct file download URL', () => {
     const url = getFileDownloadUrl('mock-token', 'documents/file_1.pdf');
     expect(url).toBe('https://api.telegram.org/file/botmock-token/documents/file_1.pdf');
+  });
+});
+
+describe('Chapter Selection and Slok Retrieval Flow', () => {
+  it('handles selecting chapter via callback and then entering slok as plain text without reply_to_message', async () => {
+    const testChatId = 55555;
+    const testToken = 'mock-token';
+
+    let capturedUrl = '';
+
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = vi.fn().mockImplementation(async (url: string | URL | Request, init?: RequestInit) => {
+      const urlStr = url.toString();
+      if (urlStr.includes('api.telegram.org')) {
+        capturedUrl = urlStr;
+        return new Response(JSON.stringify({ ok: true, result: {} }));
+      }
+      if (urlStr.includes('vedicscriptures.github.io/slok/2/47')) {
+        return new Response(
+          JSON.stringify({
+            chapter: 2,
+            verse: 47,
+            slok: 'कर्मण्येवाधिकारस्ते मा फलेषु कदाचन।',
+            tej: { ht: 'कर्म करने में ही तुम्हारा अधिकार है, फल में कभी नहीं।' },
+            gambir: { et: 'You have a right to perform your prescribed duty, but you are not entitled to the fruits of action.' },
+          })
+        );
+      }
+      return originalFetch(url, init);
+    });
+
+    try {
+      // Step 1: User clicks Chapter 2 button
+      await onCallbackQuery(
+        {
+          id: 'cb_1',
+          from: { id: 111, is_bot: false, first_name: 'Devotee' },
+          message: {
+            message_id: 10,
+            chat: { id: testChatId, type: 'private' },
+            date: 1600000000,
+          },
+          data: 'ch_2',
+        },
+        testToken
+      );
+
+      // Verify that chapter 2 is stored in session
+      expect(getUserChapter(testChatId)).toBe(2);
+
+      // Step 2: User enters slok number "47" as plain text (NO reply_to_message!)
+      await onMessage(
+        {
+          message_id: 11,
+          chat: { id: testChatId, type: 'private' },
+          date: 1600000005,
+          text: '47',
+        },
+        testToken
+      );
+
+      // Verify message sent to telegram contains the fetched slok!
+      expect(capturedUrl).toContain('sendMessage');
+      expect(decodeURIComponent(capturedUrl)).toContain('कर्मण्येवाधिकारस्ते');
+    } finally {
+      globalThis.fetch = originalFetch;
+      clearUserSession(testChatId);
+    }
+  });
+
+  it('handles clicking verse button directly from inline keyboard and edits existing message', async () => {
+    const testChatId = 55556;
+    const testToken = 'mock-token';
+
+    let capturedUrl = '';
+    let capturedBody = '';
+
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = vi.fn().mockImplementation(async (url: string | URL | Request, init?: RequestInit) => {
+      const urlStr = url.toString();
+      if (urlStr.includes('api.telegram.org')) {
+        capturedUrl = urlStr;
+        if (init?.body) capturedBody = String(init.body);
+        return new Response(JSON.stringify({ ok: true, result: {} }));
+      }
+      if (urlStr.includes('vedicscriptures.github.io/slok/1/1')) {
+        return new Response(
+          JSON.stringify({
+            chapter: 1,
+            verse: 1,
+            slok: 'धृतराष्ट्र उवाच',
+            tej: { ht: 'धृतराष्ट्र ने कहा' },
+            gambir: { et: 'Dhritarashtra said' },
+          })
+        );
+      }
+      return originalFetch(url, init);
+    });
+
+    try {
+      await onCallbackQuery(
+        {
+          id: 'cb_2',
+          from: { id: 112, is_bot: false, first_name: 'Devotee' },
+          message: {
+            message_id: 20,
+            chat: { id: testChatId, type: 'private' },
+            date: 1600000000,
+          },
+          data: 'v_1_1',
+        },
+        testToken
+      );
+
+      expect(capturedUrl).toContain('editMessageText');
+      expect(capturedBody).toContain('धृतराष्ट्र उवाच');
+      expect(capturedBody).toContain('back_to_chapters');
+      expect(capturedBody).toContain('ch_1');
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
   });
 });
