@@ -2,17 +2,22 @@ import {
   Env,
   TelegramUpdate,
   TelegramMessage,
+  TelegramCallbackQuery,
   TelegramApiResponse,
+  TelegramInlineKeyboardButton,
 } from './types';
 import {
   getTelegramApiUrl,
   sendPlainText,
+  sendMessageWithMarkup,
+  answerCallbackQuery,
   getFile,
   getFileDownloadUrl,
   setWebhook,
   deleteWebhook,
 } from './telegram';
 import {
+  CHAPTER_VERSE_COUNTS,
   gitaslokid,
   getRandomChapterAndVerse,
   fetchSlok,
@@ -91,12 +96,62 @@ export async function handleWebhook(
 }
 
 /**
+ * Creates inline keyboard buttons for chapters 1 through 18.
+ */
+export function getChapterKeyboard(): TelegramInlineKeyboardButton[][] {
+  const keyboard: TelegramInlineKeyboardButton[][] = [];
+  let row: TelegramInlineKeyboardButton[] = [];
+
+  for (let ch = 1; ch <= 18; ch++) {
+    row.push({
+      text: `Ch ${ch}`,
+      callback_data: `ch_${ch}`,
+    });
+
+    // 4 buttons per row (last row has 2)
+    if (row.length === 4 || ch === 18) {
+      keyboard.push(row);
+      row = [];
+    }
+  }
+
+  return keyboard;
+}
+
+/**
  * Handle incoming Update.
  * https://core.telegram.org/bots/api#update
  */
 export async function onUpdate(update: TelegramUpdate, token: string): Promise<void> {
   if (update.message) {
     await onMessage(update.message, token);
+  } else if (update.callback_query) {
+    await onCallbackQuery(update.callback_query, token);
+  }
+}
+
+/**
+ * Handle incoming CallbackQuery (when user clicks an inline button).
+ * https://core.telegram.org/bots/api#callbackquery
+ */
+export async function onCallbackQuery(
+  callbackQuery: TelegramCallbackQuery,
+  token: string
+): Promise<void> {
+  await answerCallbackQuery(token, callbackQuery.id);
+
+  const data = callbackQuery.data;
+  const chatId = callbackQuery.message?.chat.id;
+  if (!chatId || !data) return;
+
+  if (data.startsWith('ch_')) {
+    const chapterNum = parseInt(data.replace('ch_', ''), 10);
+    const maxVerse = CHAPTER_VERSE_COUNTS[chapterNum - 1] ?? 47;
+
+    await sendMessageWithMarkup(token, chatId, `Selected Chapter ${chapterNum}.\nPlease enter verse number (1-${maxVerse}):`, {
+      force_reply: true,
+      input_field_placeholder: `e.g. 1 or 47`,
+    });
   }
 }
 
@@ -143,11 +198,37 @@ export async function onMessage(
         replyText = prepareSlokToSend(slokData);
       } else if (lower.startsWith('/getslok')) {
         const parts = trimmed.split(/\s+/);
+        // If user just sent "/getSlok" with no arguments, prompt with chapter buttons
+        if (parts.length === 1) {
+          if (message.chat?.id) {
+            return sendMessageWithMarkup(token, message.chat.id, 'Please select a Bhagavad Gita Chapter:', {
+              inline_keyboard: getChapterKeyboard(),
+            });
+          }
+          return;
+        }
+
         const chapter = parseInt(parts[1] || '1', 10);
         const verse = parseInt(parts[2] || '1', 10);
 
         if (!isValidChapterAndVerse(chapter, verse)) {
           replyText = `Invalid chapter or verse. Please enter a valid chapter (1-18) and verse number (e.g. /getSlok 2 47).`;
+        } else {
+          const slokData = await fetchSlok(chapter, verse);
+          replyText = prepareSlokToSend(slokData);
+        }
+      } else if (
+        message.reply_to_message?.text &&
+        message.reply_to_message.text.includes('Selected Chapter')
+      ) {
+        // User replied to our "Selected Chapter X. Please enter verse number:" prompt
+        const match = message.reply_to_message.text.match(/Selected Chapter (\d+)/);
+        const chapter = match ? parseInt(match[1], 10) : 1;
+        const verse = parseInt(trimmed, 10);
+
+        if (!isValidChapterAndVerse(chapter, verse)) {
+          const maxVerse = CHAPTER_VERSE_COUNTS[chapter - 1] ?? 47;
+          replyText = `Invalid verse number "${trimmed}" for Chapter ${chapter}. Please provide a number between 1 and ${maxVerse}.`;
         } else {
           const slokData = await fetchSlok(chapter, verse);
           replyText = prepareSlokToSend(slokData);

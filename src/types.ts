@@ -37,7 +37,34 @@ export interface TelegramMessage {
   text?: string;
   document?: TelegramDocument;
   caption?: string;
+  reply_to_message?: TelegramMessage;
   [key: string]: unknown;
+}
+
+export interface TelegramCallbackQuery {
+  id: string;
+  from: TelegramUser;
+  message?: TelegramMessage;
+  inline_message_id?: string;
+  chat_instance?: string;
+  data?: string;
+  game_short_name?: string;
+}
+
+export interface TelegramInlineKeyboardButton {
+  text: string;
+  callback_data?: string;
+  url?: string;
+}
+
+export interface TelegramInlineKeyboardMarkup {
+  inline_keyboard: TelegramInlineKeyboardButton[][];
+}
+
+export interface TelegramForceReply {
+  force_reply: true;
+  input_field_placeholder?: string;
+  selective?: boolean;
 }
 
 export interface TelegramUpdate {
@@ -46,6 +73,7 @@ export interface TelegramUpdate {
   edited_message?: TelegramMessage;
   channel_post?: TelegramMessage;
   edited_channel_post?: TelegramMessage;
+  callback_query?: TelegramCallbackQuery;
   [key: string]: unknown;
 }
 

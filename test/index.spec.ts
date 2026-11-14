@@ -7,6 +7,7 @@ import {
   isValidChapterAndVerse,
   CHAPTER_VERSE_COUNTS,
 } from '../src/slok';
+import { getChapterKeyboard } from '../src/index';
 import { getTelegramApiUrl, getFileDownloadUrl } from '../src/telegram';
 import { VedicSlokResponse } from '../src/types';
 
@@ -147,6 +148,15 @@ describe('Slok Utilities', () => {
     expect(formatted).toContain('Hindi Translation:');
     expect(formatted).toContain('English Translation:');
     expect(formatted).toContain('Hare Krishna!!');
+  });
+
+  it('generates an inline keyboard for 18 chapters', () => {
+    const keyboard = getChapterKeyboard();
+    expect(keyboard.length).toBe(5); // 4 + 4 + 4 + 4 + 2 rows = 18 total
+    const totalButtons = keyboard.reduce((sum, row) => sum + row.length, 0);
+    expect(totalButtons).toBe(18);
+    expect(keyboard[0][0]).toEqual({ text: 'Ch 1', callback_data: 'ch_1' });
+    expect(keyboard[4][1]).toEqual({ text: 'Ch 18', callback_data: 'ch_18' });
   });
 });
 

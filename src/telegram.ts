@@ -1,4 +1,9 @@
-import { TelegramApiResponse, TelegramFileResult } from './types';
+import {
+  TelegramApiResponse,
+  TelegramFileResult,
+  TelegramInlineKeyboardMarkup,
+  TelegramForceReply,
+} from './types';
 
 /**
  * Builds a URL to call the Telegram Bot API.
@@ -33,6 +38,49 @@ export async function sendPlainText(
     text,
   });
   const res = await fetch(url);
+  return (await res.json()) as TelegramApiResponse;
+}
+
+/**
+ * Sends a message with custom reply markup (e.g. InlineKeyboardMarkup or ForceReply).
+ */
+export async function sendMessageWithMarkup(
+  token: string,
+  chatId: number,
+  text: string,
+  replyMarkup: TelegramInlineKeyboardMarkup | TelegramForceReply
+): Promise<TelegramApiResponse> {
+  const url = `https://api.telegram.org/bot${token}/sendMessage`;
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      chat_id: chatId,
+      text,
+      reply_markup: replyMarkup,
+    }),
+  });
+  return (await res.json()) as TelegramApiResponse;
+}
+
+/**
+ * Answers a callback query to dismiss the button loading spinner.
+ * https://core.telegram.org/bots/api#answercallbackquery
+ */
+export async function answerCallbackQuery(
+  token: string,
+  callbackQueryId: string,
+  text?: string
+): Promise<TelegramApiResponse> {
+  const url = `https://api.telegram.org/bot${token}/answerCallbackQuery`;
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      callback_query_id: callbackQueryId,
+      text,
+    }),
+  });
   return (await res.json()) as TelegramApiResponse;
 }
 
