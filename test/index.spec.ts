@@ -12,6 +12,8 @@ import {
 import {
   getChapterKeyboard,
   getVerseKeyboard,
+  getHelpKeyboard,
+  getHelpMessage,
   setUserChapter,
   getUserChapter,
   clearUserSession,
@@ -365,5 +367,127 @@ describe('Chapter Selection and Slok Retrieval Flow', () => {
     } finally {
       globalThis.fetch = originalFetch;
     }
+  });
+
+  describe('Help Guide and Quick Action Buttons', () => {
+    it('returns a comprehensive help guide containing all implemented features', () => {
+      const help = getHelpMessage();
+      expect(help).toContain('Welcome to the Bhagavad Gita & Utility Bot!');
+      expect(help).toContain('/getSlok');
+      expect(help).toContain('/randomSlok');
+      expect(help).toContain('INTERACTIVE BROWSING');
+      expect(help).toContain('DIRECT SLOK LOOKUP');
+      expect(help).toContain('ACTIVE CHAPTER MEMORY');
+      expect(help).toContain('FILE UTILITY');
+      expect(help).toContain('Previous Slok');
+      expect(help).toContain('chapter 2 verse 47');
+      expect(help).toContain('Hare Krishna!');
+    });
+
+    it('provides interactive buttons for quick navigation in help keyboard', () => {
+      const keyboard = getHelpKeyboard();
+      expect(keyboard.length).toBe(1);
+      expect(keyboard[0]).toEqual([
+        { text: '📖 Browse Chapters', callback_data: 'back_to_chapters' },
+        { text: '🎲 Random Slok', callback_data: 'random_slok' },
+      ]);
+    });
+
+    it('sends help message with markup when /help or /start is received', async () => {
+      const testChatId = 77777;
+      const testToken = 'mock-token';
+      let capturedBody = '';
+
+      const originalFetch = globalThis.fetch;
+      globalThis.fetch = vi.fn().mockImplementation(async (url: string | URL | Request, init?: RequestInit) => {
+        if (url.toString().includes('api.telegram.org')) {
+          if (init?.body) capturedBody = String(init.body);
+          return new Response(JSON.stringify({ ok: true, result: {} }));
+        }
+        return originalFetch(url, init);
+      });
+
+      try {
+        await onMessage(
+          {
+            message_id: 99,
+            chat: { id: testChatId, type: 'private' },
+            date: 1600000000,
+            text: '/help',
+          },
+          testToken
+        );
+
+        expect(capturedBody).toContain('INTERACTIVE BROWSING');
+        expect(capturedBody).toContain('back_to_chapters');
+        expect(capturedBody).toContain('random_slok');
+      } finally {
+        globalThis.fetch = originalFetch;
+      }
+    });
+
+    it('handles random_slok and help callback queries', async () => {
+      const testChatId = 88888;
+      const testToken = 'mock-token';
+      let capturedBody = '';
+
+      const originalFetch = globalThis.fetch;
+      globalThis.fetch = vi.fn().mockImplementation(async (url: string | URL | Request, init?: RequestInit) => {
+        const urlStr = url.toString();
+        if (urlStr.includes('api.telegram.org')) {
+          if (init?.body) capturedBody = String(init.body);
+          return new Response(JSON.stringify({ ok: true, result: {} }));
+        }
+        if (urlStr.includes('vedicscriptures.github.io/slok/')) {
+          return new Response(
+            JSON.stringify({
+              chapter: 1,
+              verse: 1,
+              slok: 'धृतराष्ट्र उवाच',
+              tej: { ht: 'धृतराष्ट्र ने कहा' },
+              gambir: { et: 'Dhritarashtra said' },
+            })
+          );
+        }
+        return originalFetch(url, init);
+      });
+
+      try {
+        // Test random_slok callback
+        await onCallbackQuery(
+          {
+            id: 'cb_rand',
+            from: { id: 113, is_bot: false, first_name: 'Devotee' },
+            message: {
+              message_id: 101,
+              chat: { id: testChatId, type: 'private' },
+              date: 1600000000,
+            },
+            data: 'random_slok',
+          },
+          testToken
+        );
+        expect(capturedBody).toContain('धृतराष्ट्र उवाच');
+
+        // Test help callback
+        capturedBody = '';
+        await onCallbackQuery(
+          {
+            id: 'cb_help',
+            from: { id: 114, is_bot: false, first_name: 'Devotee' },
+            message: {
+              message_id: 102,
+              chat: { id: testChatId, type: 'private' },
+              date: 1600000000,
+            },
+            data: 'help',
+          },
+          testToken
+        );
+        expect(capturedBody).toContain('INTERACTIVE BROWSING');
+      } finally {
+        globalThis.fetch = originalFetch;
+      }
+    });
   });
 });
