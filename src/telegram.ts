@@ -126,10 +126,22 @@ export async function getFile(
 }
 
 /**
- * Returns the download URL for a file stored on Telegram servers.
+ * Returns the upstream download URL for a file stored on Telegram servers.
+ * NOTE: This URL contains the bot token and must only be used internally by the server
+ * to fetch files from Telegram. Never expose this URL directly to users.
  */
 export function getFileDownloadUrl(token: string, filePath: string): string {
   return `https://api.telegram.org/file/bot${token}/${filePath}`;
+}
+
+/**
+ * Returns the proxy download URL hosted on the worker for a file.
+ * This URL is safe to share with users because it does not expose the bot token.
+ */
+export function getProxyFileDownloadUrl(baseUrl: string, filePath: string): string {
+  const cleanBase = baseUrl.replace(/\/+$/, '');
+  const cleanPath = filePath.replace(/^\/+/, '');
+  return `${cleanBase}/file/${cleanPath}`;
 }
 
 /**

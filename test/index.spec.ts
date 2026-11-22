@@ -19,8 +19,14 @@ import {
   clearUserSession,
   onCallbackQuery,
   onMessage,
+  handleFileDownload,
+  getWorkerBaseUrl,
 } from '../src/index';
-import { getTelegramApiUrl, getFileDownloadUrl } from '../src/telegram';
+import {
+  getTelegramApiUrl,
+  getFileDownloadUrl,
+  getProxyFileDownloadUrl,
+} from '../src/telegram';
 import { VedicSlokResponse } from '../src/types';
 
 describe('Telegram Bot Worker', () => {
@@ -246,6 +252,182 @@ describe('Telegram API Helpers', () => {
   it('constructs correct file download URL', () => {
     const url = getFileDownloadUrl('mock-token', 'documents/file_1.pdf');
     expect(url).toBe('https://api.telegram.org/file/botmock-token/documents/file_1.pdf');
+  });
+
+  it('constructs correct proxy file download URL without token', () => {
+    const url = getProxyFileDownloadUrl('https://myworker.workers.dev', 'documents/file_1.pdf');
+    expect(url).toBe('https://myworker.workers.dev/file/documents/file_1.pdf');
+    expect(url).not.toContain('/bot');
+  });
+
+  it('determines worker base URL from request and env', () => {
+    expect(getWorkerBaseUrl(new URL('https://mybot.workers.dev/webhook'))).toBe('https://mybot.workers.dev');
+    expect(getWorkerBaseUrl(new URL('http://localhost:8787/'))).toBe('http://localhost:8787');
+    expect(
+      getWorkerBaseUrl(new URL('https://mybot.workers.dev'), {
+        WORKER_URL: 'https://custom.domain.com',
+      })
+    ).toBe('https://custom.domain.com');
+  });
+});
+
+describe('Secure File Proxy & Document Handling', () => {
+  const secretBotToken = 'SECRET_BOT_TOKEN_12345';
+  const testChatId = 998877;
+
+  it('sends proxy download link without leaking bot token when document is received', async () => {
+    let capturedSendMessageUrl = '';
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = vi.fn().mockImplementation(async (url: string | URL | Request) => {
+      const urlStr = url.toString();
+      if (urlStr.includes('getFile')) {
+        return new Response(
+          JSON.stringify({
+            ok: true,
+            result: {
+              file_id: 'doc_123',
+              file_unique_id: 'unique_123',
+              file_path: 'documents/secret_report.pdf',
+            },
+          })
+        );
+      }
+      if (urlStr.includes('sendMessage')) {
+        capturedSendMessageUrl = urlStr;
+        return new Response(JSON.stringify({ ok: true, result: {} }));
+      }
+      return originalFetch(url);
+    });
+
+    try {
+      await onMessage(
+        {
+          message_id: 1,
+          chat: { id: testChatId, type: 'private' },
+          date: 1600000000,
+          document: {
+            file_id: 'doc_123',
+            file_unique_id: 'unique_123',
+            file_name: 'secret_report.pdf',
+          },
+        },
+        secretBotToken,
+        'https://mybot.workers.dev'
+      );
+
+      // Verify the response contains the secure proxy link and CRITICAL security requirement:
+      // BOT TOKEN IS NOT IN THE REPLY URL OR MESSAGE TEXT!
+      const parsedUrl = new URL(capturedSendMessageUrl);
+      const textParam = parsedUrl.searchParams.get('text') || '';
+      expect(textParam).toBe('Here is your file: https://mybot.workers.dev/file/documents/secret_report.pdf');
+      expect(textParam).not.toContain(secretBotToken);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it('proxies file download from Telegram without revealing bot token', async () => {
+    let capturedTelegramFetchUrl = '';
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = vi.fn().mockImplementation(async (url: string | URL | Request) => {
+      const urlStr = url.toString();
+      if (urlStr.includes('api.telegram.org/file/')) {
+        capturedTelegramFetchUrl = urlStr;
+        return new Response('PDF-CONTENT-STREAM', {
+          status: 200,
+          headers: {
+            'Content-Type': 'application/pdf',
+            'Content-Length': '18',
+          },
+        });
+      }
+      return originalFetch(url);
+    });
+
+    try {
+      const request = new Request('https://mybot.workers.dev/file/documents/sample.pdf');
+      const ctx = createExecutionContext();
+      const testEnv = { ...env, TOKEN: secretBotToken };
+      const response = await worker.fetch(request, testEnv, ctx);
+      await waitOnExecutionContext(ctx);
+
+      expect(response.status).toBe(200);
+      expect(await response.text()).toBe('PDF-CONTENT-STREAM');
+      expect(response.headers.get('Content-Type')).toBe('application/pdf');
+      expect(response.headers.get('Content-Disposition')).toBe('attachment; filename="sample.pdf"');
+
+      // The server fetched Telegram internally using the token
+      expect(capturedTelegramFetchUrl).toBe(
+        `https://api.telegram.org/file/bot${secretBotToken}/documents/sample.pdf`
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it('supports downloading files via /file?path= query parameter', async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = vi.fn().mockImplementation(async (url: string | URL | Request) => {
+      const urlStr = url.toString();
+      if (urlStr.includes('api.telegram.org/file/')) {
+        return new Response('IMAGE-DATA', {
+          status: 200,
+          headers: { 'Content-Type': 'image/png' },
+        });
+      }
+      return originalFetch(url);
+    });
+
+    try {
+      const request = new Request('https://mybot.workers.dev/file?path=photos%2Fphoto_1.png');
+      const ctx = createExecutionContext();
+      const testEnv = { ...env, TOKEN: secretBotToken };
+      const response = await worker.fetch(request, testEnv, ctx);
+      await waitOnExecutionContext(ctx);
+
+      expect(response.status).toBe(200);
+      expect(await response.text()).toBe('IMAGE-DATA');
+      expect(response.headers.get('Content-Disposition')).toBe('attachment; filename="photo_1.png"');
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it('rejects path traversal attempts or invalid paths with 400', async () => {
+    const ctx = createExecutionContext();
+    const testEnv = { ...env, TOKEN: secretBotToken };
+
+    // Path traversal via query param
+    const badQueryRequest = new Request('https://mybot.workers.dev/file?path=..%2Fetc%2Fpasswd');
+    const badQueryResponse = await worker.fetch(badQueryRequest, testEnv, ctx);
+    expect(badQueryResponse.status).toBe(400);
+
+    // Empty path
+    const emptyRequest = new Request('https://mybot.workers.dev/file/');
+    const emptyResponse = await worker.fetch(emptyRequest, testEnv, ctx);
+    expect(emptyResponse.status).toBe(400);
+  });
+
+  it('returns appropriate status when Telegram returns error on file fetch', async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = vi.fn().mockImplementation(async (url: string | URL | Request) => {
+      if (url.toString().includes('api.telegram.org/file/')) {
+        return new Response('Not Found', { status: 404 });
+      }
+      return originalFetch(url);
+    });
+
+    try {
+      const request = new Request('https://mybot.workers.dev/file/documents/missing.pdf');
+      const ctx = createExecutionContext();
+      const testEnv = { ...env, TOKEN: secretBotToken };
+      const response = await worker.fetch(request, testEnv, ctx);
+      await waitOnExecutionContext(ctx);
+
+      expect(response.status).toBe(404);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
   });
 });
 
