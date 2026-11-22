@@ -136,12 +136,22 @@ export function getFileDownloadUrl(token: string, filePath: string): string {
 
 /**
  * Returns the proxy download URL hosted on the worker for a file.
- * This URL is safe to share with users because it does not expose the bot token.
+ * This URL is safe to share with users because it does not expose the bot token,
+ * and preserves the user's original file name in the URL path.
  */
-export function getProxyFileDownloadUrl(baseUrl: string, filePath: string): string {
-  const cleanBase = baseUrl.replace(/\/+$/, '');
+export function getProxyFileDownloadUrl(
+  baseUrl: string,
+  filePath: string,
+  fileName?: string
+): string {
+  const cleanBase = baseUrl ? baseUrl.replace(/\/+$/, '') : '';
   const cleanPath = filePath.replace(/^\/+/, '');
-  return `${cleanBase}/file/${cleanPath}`;
+  const prefix = cleanBase ? `${cleanBase}/file/${cleanPath}` : `/file/${cleanPath}`;
+  if (fileName) {
+    const cleanFileName = encodeURIComponent(fileName.trim());
+    return `${prefix}/${cleanFileName}`;
+  }
+  return prefix;
 }
 
 /**
