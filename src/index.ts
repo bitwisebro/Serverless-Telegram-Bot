@@ -129,6 +129,81 @@ export function clearUserSession(chatId: number): void {
 }
 
 /**
+ * Creates inline keyboard buttons for the help message.
+ */
+export function getHelpKeyboard(): TelegramInlineKeyboardButton[][] {
+  return [
+    [
+      {
+        text: '📖 Browse Chapters',
+        callback_data: 'back_to_chapters',
+      },
+      {
+        text: '🎲 Random Slok',
+        callback_data: 'random_slok',
+      },
+    ],
+  ];
+}
+
+/**
+ * Returns the comprehensive, user-friendly help and usage guide.
+ */
+export function getHelpMessage(): string {
+  return [
+    '🙏 Welcome to the Bhagavad Gita & Utility Bot! 🌸',
+    '',
+    'Explore the timeless wisdom of the Bhagavad Gita with Sanskrit sloks, Hindi and English translations, interactive chapter/verse navigation, and file tools.',
+    '',
+    '━━━━━━━━━━━━━━━━━━━━',
+    '📖 INTERACTIVE BROWSING',
+    '━━━━━━━━━━━━━━━━━━━━',
+    '• /getSlok — Open the interactive Chapter picker (Chapters 1–18)',
+    '• /getSlok <chapter> — Browse all verses of a chapter (e.g. /getSlok 2)',
+    '• Tap any verse button to instantly view the slok with translations',
+    '• Slok Navigation: Use ◀ Previous Slok / Next Slok ▶ to read sequentially, or jump back to chapter/all chapters anytime',
+    '',
+    '━━━━━━━━━━━━━━━━━━━━',
+    '🔍 DIRECT SLOK LOOKUP',
+    '━━━━━━━━━━━━━━━━━━━━',
+    '• /getSlok <chapter> <verse> — Direct lookup (e.g. /getSlok 2 47)',
+    '• Natural text formats (no command needed!):',
+    '  - "2 47"',
+    '  - "2:47" or "2.47" or "2-47"',
+    '  - "chapter 2 verse 47" or "ch 2 v 47"',
+    '  - "ch 2, slok 47"',
+    '',
+    '━━━━━━━━━━━━━━━━━━━━',
+    '🧠 ACTIVE CHAPTER MEMORY',
+    '━━━━━━━━━━━━━━━━━━━━',
+    '• The bot remembers your selected chapter for 30 minutes!',
+    '• Once you select or read a chapter, simply type the verse number:',
+    '  - "47", "verse 47", "slok 47", or "#47"',
+    '• You can also reply directly to any slok message with a verse number',
+    '• Send "chapter 2" or "ch 2" to switch chapters and view its verses',
+    '',
+    '━━━━━━━━━━━━━━━━━━━━',
+    '🎲 RANDOM INSPIRATION',
+    '━━━━━━━━━━━━━━━━━━━━',
+    '• /randomSlok — Receive an inspiring random slok with full translations',
+    '',
+    '━━━━━━━━━━━━━━━━━━━━',
+    '📁 FILE UTILITY',
+    '━━━━━━━━━━━━━━━━━━━━',
+    '• Send any document or file attachment to get its direct Telegram download link',
+    '',
+    '━━━━━━━━━━━━━━━━━━━━',
+    '❓ COMMANDS',
+    '━━━━━━━━━━━━━━━━━━━━',
+    '• /help or /start — Show this guide',
+    '• /getSlok — Chapter selector',
+    '• /randomSlok — Random slok',
+    '',
+    'Hare Krishna! 🕉️✨',
+  ].join('\n');
+}
+
+/**
  * Creates inline keyboard buttons for chapters 1 through 18.
  */
 export function getChapterKeyboard(): TelegramInlineKeyboardButton[][] {
@@ -265,6 +340,40 @@ export async function onCallbackQuery(
     return;
   }
 
+  if (data === 'random_slok') {
+    const { chapter, verse } = getRandomChapterAndVerse();
+    try {
+      const slokData = await fetchSlok(chapter, verse);
+      const replyText = prepareSlokToSend(slokData);
+      const markup = { inline_keyboard: getSlokKeyboard(chapter, verse) };
+      if (messageId) {
+        await editMessageText(token, chatId, messageId, replyText, markup);
+      } else {
+        await sendMessageWithMarkup(token, chatId, replyText, markup);
+      }
+    } catch (err) {
+      console.error('Error fetching random slok:', err);
+      const errorText = 'Sorry, could not fetch random slok. Please try again.';
+      if (messageId) {
+        await editMessageText(token, chatId, messageId, errorText);
+      } else {
+        await sendPlainText(token, chatId, errorText);
+      }
+    }
+    return;
+  }
+
+  if (data === 'help') {
+    const helpText = getHelpMessage();
+    const markup = { inline_keyboard: getHelpKeyboard() };
+    if (messageId) {
+      await editMessageText(token, chatId, messageId, helpText, markup);
+    } else {
+      await sendMessageWithMarkup(token, chatId, helpText, markup);
+    }
+    return;
+  }
+
   if (data.startsWith('ch_')) {
     const chapterNum = parseInt(data.replace('ch_', ''), 10);
     const maxVerse = CHAPTER_VERSE_COUNTS[chapterNum - 1] ?? 47;
@@ -339,18 +448,13 @@ export async function onMessage(
       const chatId = message.chat?.id;
 
       if (lower === '/start' || lower === '/help') {
-        replyText = [
-          'Welcome to the Bhagavad Gita & Utility Bot! 🙏',
-          '',
-          'Available commands & features:',
-          '• /getSlok - Select a chapter and verse interactively',
-          '• /getSlok <chapter> <verse> - Direct lookup (e.g. /getSlok 2 47)',
-          '• /randomSlok - Get a random Bhagavad Gita slok with translations',
-          '• Send "2 47" or "chapter 2 verse 47" anytime to read a slok',
-          '• Send any document/file to get its direct Telegram download link',
-          '',
-          'Hare Krishna! 🌸',
-        ].join('\n');
+        const helpText = getHelpMessage();
+        if (chatId) {
+          return sendMessageWithMarkup(token, chatId, helpText, {
+            inline_keyboard: getHelpKeyboard(),
+          });
+        }
+        replyText = helpText;
       } else if (lower.startsWith('/randomslok')) {
         const { chapter, verse } = getRandomChapterAndVerse();
         const slokData = await fetchSlok(chapter, verse);

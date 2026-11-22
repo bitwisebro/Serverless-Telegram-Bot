@@ -5,8 +5,14 @@ This repository contains a Telegram bot built to run on Cloudflare Workers in Ty
 ## Features
 
 - **Bhagavad Gita Sloks**:
-  - `/randomSlok` - Get a random slok from any of the 18 chapters with Hindi and English translations.
-  - `/getSlok <chapter> <verse>` - Fetch a specific slok by chapter and verse (e.g., `/getSlok 2 47`).
+  - `/getSlok` — Interactive chapter selection with inline buttons for all 18 chapters.
+  - `/getSlok <chapter>` — Interactive verse selector for a specific chapter (e.g. `/getSlok 2`).
+  - `/getSlok <chapter> <verse>` — Instant lookup of any verse (e.g. `/getSlok 2 47`).
+  - **Inline Slok Navigation**: Read sequentially with ◀ Previous Slok / Next Slok ▶ buttons, and easily jump back to chapter verses or all chapters.
+  - **Smart Session Memory**: Remembers your active chapter for 30 minutes. Once selected, type just the verse number (e.g. `47`, `verse 47`, `#47`), or reply to any slok message with a verse number.
+  - **Natural Text Shortcuts**: Type `2 47`, `2:47`, `2.47`, `2-47`, `chapter 2 verse 47`, or `ch 2 v 47` directly without commands.
+  - `/randomSlok` — Get an inspiring random slok with Sanskrit, Hindi, and English translations.
+  - `/help` / `/start` — Comprehensive, interactive help menu with quick action buttons.
 - **Telegram Document Helper**: Send any document or file to receive its direct download link.
 - **Serverless & Fast**: Built for Cloudflare Workers with fast cold starts and zero server maintenance.
 - **Fully Typed in TypeScript**: Strong type safety with Telegram Bot API and Vedic Scriptures API models.
