@@ -64,17 +64,35 @@ export function getWorkerBaseUrl(url: URL, env?: Env): string {
 
 /**
  * Handles secure file downloads by proxying the request to Telegram servers.
- * This ensures the bot token is never exposed to the client in the download URL.
+ * This ensures the bot token is never exposed to the client in the download URL,
+ * and preserves the original file name in the downloaded file and headers.
  */
 export async function handleFileDownload(
   url: URL,
   token: string
 ): Promise<Response> {
   let filePath = '';
-  if (url.pathname.startsWith('/file/')) {
-    filePath = url.pathname.slice('/file/'.length);
-  } else if (url.pathname === '/file') {
+  let customFileName =
+    url.searchParams.get('name')?.trim() ||
+    url.searchParams.get('filename')?.trim() ||
+    '';
+
+  if (url.searchParams.has('path')) {
     filePath = url.searchParams.get('path') || '';
+  } else if (url.pathname.startsWith('/file/')) {
+    const rawPath = url.pathname.slice('/file/'.length);
+    const parts = rawPath.split('/').filter(Boolean);
+
+    // If there are 3 or more segments (e.g. documents/file_0.pdf/original_name.pdf)
+    // Telegram file paths have format `<category>/<file_identifier>` (2 parts)
+    if (parts.length >= 3) {
+      filePath = `${parts[0]}/${parts[1]}`;
+      if (!customFileName) {
+        customFileName = decodeURIComponent(parts.slice(2).join('/'));
+      }
+    } else {
+      filePath = rawPath;
+    }
   }
 
   filePath = decodeURIComponent(filePath).trim();
@@ -108,10 +126,21 @@ export async function handleFileDownload(
       headers.set('Content-Length', contentLength);
     }
 
-    const fileName = filePath.split('/').pop();
-    if (fileName) {
-      headers.set('Content-Disposition', `attachment; filename="${fileName}"`);
-    }
+    // Determine the filename for Content-Disposition
+    const fallbackFileName = filePath.split('/').pop() || 'file';
+    const targetFileName = customFileName
+      ? customFileName.split(/[/\\]/).pop() || fallbackFileName
+      : fallbackFileName;
+
+    const asciiFileName = targetFileName
+      .replace(/[^\x20-\x7E]/g, '_')
+      .replace(/["\r\n]/g, '_');
+    const utf8FileName = encodeURIComponent(targetFileName);
+
+    headers.set(
+      'Content-Disposition',
+      `attachment; filename="${asciiFileName}"; filename*=UTF-8''${utf8FileName}`
+    );
 
     return new Response(response.body, {
       status: 200,
@@ -519,13 +548,16 @@ export async function onMessage(
   try {
     if (message.document) {
       const fileId = message.document.file_id;
+      const originalFileName = message.document.file_name;
       const fileData = await getFile(token, fileId);
 
       if (fileData.ok && fileData.result?.file_path) {
         const filePath = fileData.result.file_path;
-        const fileUrl = workerBaseUrl
-          ? getProxyFileDownloadUrl(workerBaseUrl, filePath)
-          : `/file/${filePath}`;
+        const fileUrl = getProxyFileDownloadUrl(
+          workerBaseUrl || '',
+          filePath,
+          originalFileName
+        );
         replyText = `Here is your file: ${fileUrl}`;
       } else {
         replyText = 'Sorry, could not retrieve the file details from Telegram.';
