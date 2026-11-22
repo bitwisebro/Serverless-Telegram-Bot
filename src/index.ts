@@ -14,6 +14,7 @@ import {
   answerCallbackQuery,
   getFile,
   getFileDownloadUrl,
+  getProxyFileDownloadUrl,
   setWebhook,
   deleteWebhook,
 } from './telegram';
@@ -48,6 +49,81 @@ export function getWebhookSecret(env?: Env): string {
 }
 
 /**
+ * Resolves the public base URL of the Worker from incoming request or env.
+ */
+export function getWorkerBaseUrl(url: URL, env?: Env): string {
+  if (env?.WORKER_URL) {
+    return env.WORKER_URL.replace(/\/+$/, '');
+  }
+  const protocol =
+    url.host.includes('localhost') || url.host.includes('127.0.0.1')
+      ? url.protocol
+      : 'https:';
+  return `${protocol}//${url.host}`;
+}
+
+/**
+ * Handles secure file downloads by proxying the request to Telegram servers.
+ * This ensures the bot token is never exposed to the client in the download URL.
+ */
+export async function handleFileDownload(
+  url: URL,
+  token: string
+): Promise<Response> {
+  let filePath = '';
+  if (url.pathname.startsWith('/file/')) {
+    filePath = url.pathname.slice('/file/'.length);
+  } else if (url.pathname === '/file') {
+    filePath = url.searchParams.get('path') || '';
+  }
+
+  filePath = decodeURIComponent(filePath).trim();
+
+  // Basic path validation: reject empty path or path traversal attempts
+  if (!filePath || filePath.includes('..') || filePath.startsWith('/')) {
+    return new Response('Invalid file path', { status: 400 });
+  }
+
+  if (!token) {
+    return new Response('Bot token not configured', { status: 500 });
+  }
+
+  try {
+    const telegramUrl = getFileDownloadUrl(token, filePath);
+    const response = await fetch(telegramUrl);
+
+    if (!response.ok) {
+      return new Response('Failed to retrieve file from Telegram', {
+        status: response.status,
+      });
+    }
+
+    const headers = new Headers();
+    const contentType = response.headers.get('Content-Type');
+    if (contentType) {
+      headers.set('Content-Type', contentType);
+    }
+    const contentLength = response.headers.get('Content-Length');
+    if (contentLength) {
+      headers.set('Content-Length', contentLength);
+    }
+
+    const fileName = filePath.split('/').pop();
+    if (fileName) {
+      headers.set('Content-Disposition', `attachment; filename="${fileName}"`);
+    }
+
+    return new Response(response.body, {
+      status: 200,
+      headers,
+    });
+  } catch (err) {
+    console.error('Error proxying file download:', err);
+    return new Response('Internal error retrieving file', { status: 500 });
+  }
+}
+
+/**
  * Handle incoming requests to the Worker.
  */
 export async function handleRequest(
@@ -58,13 +134,16 @@ export async function handleRequest(
   const url = new URL(request.url);
   const token = getBotToken(env);
   const secret = getWebhookSecret(env);
+  const workerBaseUrl = getWorkerBaseUrl(url, env);
 
   if (url.pathname === WEBHOOK) {
-    return handleWebhook(request, token, secret, ctx);
+    return handleWebhook(request, token, secret, ctx, workerBaseUrl);
   } else if (url.pathname === '/registerWebhook') {
     return registerWebhook(url, token, secret, WEBHOOK);
   } else if (url.pathname === '/unRegisterWebhook') {
     return unRegisterWebhook(token);
+  } else if (url.pathname.startsWith('/file/') || url.pathname === '/file') {
+    return handleFileDownload(url, token);
   }
 
   return new Response('No handler for this request', { status: 404 });
@@ -78,7 +157,8 @@ export async function handleWebhook(
   request: Request,
   token: string,
   secret: string,
-  ctx: ExecutionContext
+  ctx: ExecutionContext,
+  workerBaseUrl?: string
 ): Promise<Response> {
   // Validate secret token if configured
   if (secret) {
@@ -90,7 +170,7 @@ export async function handleWebhook(
 
   try {
     const update = (await request.json()) as TelegramUpdate;
-    ctx.waitUntil(onUpdate(update, token));
+    ctx.waitUntil(onUpdate(update, token, workerBaseUrl));
     return new Response('Ok', { status: 200 });
   } catch (err) {
     console.error('Error parsing update:', err);
@@ -190,7 +270,7 @@ export function getHelpMessage(): string {
     '━━━━━━━━━━━━━━━━━━━━',
     '📁 FILE UTILITY',
     '━━━━━━━━━━━━━━━━━━━━',
-    '• Send any document or file attachment to get its direct Telegram download link',
+    '• Send any document or file attachment to get a secure download link',
     '',
     '━━━━━━━━━━━━━━━━━━━━',
     '❓ COMMANDS',
@@ -306,9 +386,13 @@ export function getSlokKeyboard(
  * Handle incoming Update.
  * https://core.telegram.org/bots/api#update
  */
-export async function onUpdate(update: TelegramUpdate, token: string): Promise<void> {
+export async function onUpdate(
+  update: TelegramUpdate,
+  token: string,
+  workerBaseUrl?: string
+): Promise<void> {
   if (update.message) {
-    await onMessage(update.message, token);
+    await onMessage(update.message, token, workerBaseUrl);
   } else if (update.callback_query) {
     await onCallbackQuery(update.callback_query, token);
   }
@@ -426,7 +510,8 @@ export async function onCallbackQuery(
  */
 export async function onMessage(
   message: TelegramMessage,
-  token: string
+  token: string,
+  workerBaseUrl?: string
 ): Promise<TelegramApiResponse | undefined> {
   console.log('Received message:', message);
   let replyText = '';
@@ -437,7 +522,10 @@ export async function onMessage(
       const fileData = await getFile(token, fileId);
 
       if (fileData.ok && fileData.result?.file_path) {
-        const fileUrl = getFileDownloadUrl(token, fileData.result.file_path);
+        const filePath = fileData.result.file_path;
+        const fileUrl = workerBaseUrl
+          ? getProxyFileDownloadUrl(workerBaseUrl, filePath)
+          : `/file/${filePath}`;
         replyText = `Here is your file: ${fileUrl}`;
       } else {
         replyText = 'Sorry, could not retrieve the file details from Telegram.';

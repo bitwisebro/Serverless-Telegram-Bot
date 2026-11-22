@@ -1,6 +1,7 @@
 export interface Env {
   TOKEN?: string;
   SECRET?: string;
+  WORKER_URL?: string;
 }
 
 export interface TelegramUser {

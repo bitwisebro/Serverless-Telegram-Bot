@@ -13,7 +13,7 @@ This repository contains a Telegram bot built to run on Cloudflare Workers in Ty
   - **Natural Text Shortcuts**: Type `2 47`, `2:47`, `2.47`, `2-47`, `chapter 2 verse 47`, or `ch 2 v 47` directly without commands.
   - `/randomSlok` — Get an inspiring random slok with Sanskrit, Hindi, and English translations.
   - `/help` / `/start` — Comprehensive, interactive help menu with quick action buttons.
-- **Telegram Document Helper**: Send any document or file to receive its direct download link.
+- **Secure Telegram Document Proxy**: Send any document or file attachment to receive a secure download link. Files are streamed safely through the Cloudflare Worker proxy (`/file/<file_path>`) so your secret bot token is never exposed to users in download URLs.
 - **Serverless & Fast**: Built for Cloudflare Workers with fast cold starts and zero server maintenance.
 - **Fully Typed in TypeScript**: Strong type safety with Telegram Bot API and Vedic Scriptures API models.
 - **Modern Cloudflare Workers Modules**: Uses the modern ES module syntax (`export default { fetch }`) with support for environment secrets (`wrangler secret put`).
